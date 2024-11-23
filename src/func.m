@@ -16,7 +16,7 @@ p5 = @(k) (kappa(1,1) + kappa(1,2)*w_f(k) + kappa(1,3)*w_f(k)^2) + ...
           w_r * (x.v_h(k) - v_ref)^2 - ...
           lambda(k) * a_k(k) + ...
           w_c * (u.T_f(k-1) * I_g(x.n_g(k-1)))^2;
-%% 
+%% hello
 % Equations 23-30 as anonymous functions
 
 % Basic Hamiltonian (23)
@@ -75,7 +75,7 @@ function F_b = F_b_opt(k)
     end
 end
 % Helper function for gear optimization
-function u_g = u_g_opt(k)
+function u_g = u_g_opt(k) 
     H_up = Inf;
     H_sus = Inf;
     H_down = Inf;
