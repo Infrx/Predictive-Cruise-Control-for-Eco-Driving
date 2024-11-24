@@ -164,7 +164,7 @@ for k = 2:N-1
     end
     % Update the states using the limited acceleration
     % PMP STUFF
-    lambda(k) = find_optimal_lambda(x, u, 20, 30, 1, 10^(-6), k);
+    lambda_opt = find_optimal_lambda(x, u, 20, 30, 1, 10^(-6), k);
     %
     if k > 2
         x.v_h(k+1) = min(min(x.v_h(k) + total_acceleration * dt, v_lim) , v_h_m3(x,k));
@@ -291,21 +291,21 @@ function u_g = u_g_opt(x, u, lambda, k)
        x.n_g(k) = x.n_g(k) - 1;
        u.T_f(k) = T_f_opt(x, u, lambda, k);
        u.F_b(k) = F_b_opt(lambda,k);
-       H_down = H(x, k, lambda, u);
+       H_down = H(x,u,k);
     end
-    x.n_g(k) = gear_temp;
+    x.n_g = gear_temp;
     if gear_temp == 5
        H_up = Inf;
     else
        x.n_g(k) = x.n_g(k - 1) + 1;
        u.T_f(k) = T_f_opt(x, u, lambda, k);
        u.F_b(k) = F_b_opt(lambda, k);
-       H_up = H(x, k, lambda, u);
+       H_up = H(x,u,k);
     end
     x.n_g(k) = gear_temp;
     u.T_f(k) = T_f_opt(x, u, lambda, k);
     u.F_b(k) = F_b_opt(lambda, k);
-    H_sus = H(x, k, lambda, u);
+    H_sus = H(x,u,k);
 
     [~, idx] = min([H_down, H_sus, H_up]);
     u_g = idx - 2;
@@ -435,7 +435,7 @@ function [x_final, lambda_final] = forward_simulation(x, u, lambda_1, N, k)
         [x_final, lambda] = update_states_and_costates(x_final, u, lambda, n);
     end
     
-    lambda_final = lambda;
+    lambda_final = lambda(N+1);
 end
 
 % Helper function to update states and co-states
@@ -508,7 +508,6 @@ end
 %% MAIN HRLPERS
 function WF = w_f(x,k)
     global I_g r_w w_f_max
-    class(x.n_g(k))
     WF = min(30/(pi*r_w) * I_g(x.n_g(k)) * x.v_h(k), w_f_max);
 end
 
@@ -556,7 +555,7 @@ function val = T_max(x, k)
     ((v_h_max(k+1) - x.v_h(k))/dt + get_accelerations(x,k)) * M*r_w/eta_t);
 end
 
-function val = H(x, u, lambda, k)
-    val = p1(x,k)*u.T_f(k)^2 + p2(x, u, lambda, k)*u.T_f(k) + p3()*u.F_b(x,k)^2 + p4(lambda,k)*u.F_b(k) + p5(x, k, lambda, u);
+function val = H(x, u, k)
+    val = p1(x,k)*u.T_f(k)^2 + p2(x, u, lambda, k)*u.T_f(k) + p3(x,k)*u.F_b(x,k)^2 + p4(x,k)*u.F_b(k) + p5(x,k);
 end
 %H = @(x,u,k) p1(x,k)*u.T_f(k)^2 + p2(x,k)*u.T_f(k) + p3(x,k)*u.F_b(x,k)^2 + p4(x,k)*u.F_b(k) + p5(x,k);

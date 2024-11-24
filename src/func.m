@@ -100,8 +100,7 @@ function u_g = u_g_opt(k)
     u_g = idx - 2;
 end
 
-function dLdv = calc_dLdv(k)
-
+function dLdv = calc_dLdv(x,k)
     % Calculate dωf/dvh at k+1
     dw_dv = 30/(pi*r_w) * I_g(x.n_g(k+1));
     dwr_dv = 2*w_r(x.v_h - v_ref);
@@ -120,12 +119,12 @@ function dLdv = calc_dLdv(k)
     dLdv = dmdot_dv + dwr_dv;
 end
 
-function B = get_B(k)
-    B = calc_dLdv(k)*dt;
+function B = get_B(x,k)
+    B = calc_dLdv(x,k)*dt;
 end
-function A = get_A(k)
+function A = get_A(x,k)
     A = 1 - (rho*c_d*A_f/M)*x.v_h(k)*dt;
 end
 function lambda_ = get_Lambda(k)
-    lambda_ = (lambda(k) - get_B(k))/get_A(k);
+    lambda_ = (lambda(k) - get_B(x,k))/get_A(x,k);
 end

@@ -1,5 +1,6 @@
 % Function to calculate boundary condition F(λ(1)) from equation (31)
-function F = calc_boundary_condition(lambda_1, N, x, v_f, phi)
+PCC = 1;
+function F = calc_boundary_condition(lambda_1, N, x, v_f, phi) % #2
     % Initialize lambda array for N+1 steps
     lambda = zeros(N+1, 1);
     lambda(1) = lambda_1;
@@ -12,23 +13,19 @@ function F = calc_boundary_condition(lambda_1, N, x, v_f, phi)
 end
 
 % Function to get bounds [ΛL, ΛU] based on equations (32)-(37)
-function [Lambda_L, Lambda_U] = get_lambda_bounds(x, N, phi)
-    % Calculate A(k+1) and B bounds
-    A = @(k) 1 - (rho*c_d*A_f/M)*x.v_h*dt;
+function [Lambda_L, Lambda_U] = get_lambda_bounds(x, N, phi, k) % #1
     B_min = -100;  % Initialize to conservative value
     B_max = 100;   % Initialize to conservative value
     
     % Calculate q
-    q = max(abs(x.v_h - v_f));
+    q = max(abs(x.v_h(k) - v_f));
     
     % Terminal conditions for λmax and λmin
     lambda_max_N1 = 2*phi*q;
     lambda_min_N1 = -2*phi*q;
     
     % Calculate bounds using equations (36)
-    lambda_max = lambda_max_N1;
-    lambda_min = lambda_min_N1;
-    
+
     lambda_max = lambda_max_N1 + N * B_max;
     lambda_min = lambda_min_N1 + N * B_min;
 
