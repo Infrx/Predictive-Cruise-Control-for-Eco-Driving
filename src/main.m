@@ -164,7 +164,7 @@ for k = 2:N-1
     end
     % Update the states using the limited acceleration
     % PMP STUFF
-    lambda(k) = find_optimal_lambda(x, u, 20, 30, 1, 10^(-6), k);
+    %lambda(k) = find_optimal_lambda(x, u, 20, 30, 1, 10^(-6), k);
     %
     if k > 2
         x.v_h(k+1) = min(min(x.v_h(k) + total_acceleration * dt, v_lim) , v_h_m3(x,k));
@@ -248,68 +248,7 @@ grid on;
 
 % Helper function for T_f optimization
 
-function T_f = T_f_opt(x,u, lambda, k)
-    p1_ = p1(x,k);
-    p2_ = p2(x,u,lambda,k);
-    if p1_ > 0
-        T_f_candidate = -p2_/(2*p1_);
-        T_f = min(max(T_f_candidate, 0), T_max(x,k));
-    end
-    if p1_ < 0
-        if -p2(x,k)/(2*p1(x,k)) <= T_max(x,k)
-            T_f = T_max(x,k);
-        else
-            T_f = 0;
-        end
-    end
-    if p1_ == 0
-        if p2(x,k) >= 0
-            T_f = 0;
-        else
-            T_f = T_max(x,k);
-        end
-    end
-end
-function F_b = F_b_opt(lambda,k)
-    global F_b_max
-    p3_ = p3();
-    p4_ = p4(lambda, k);
-    if p3() > 0
-        F_b_candidate = -p4_/(2*p3_);
-        F_b = min(max(F_b_candidate, 0), F_b_max);
-    end
-end
-% Helper function for gear optimization
-function u_g = u_g_opt(x, u, lambda, k)
-    H_up = Inf;
-    H_sus = Inf;
-    H_down = Inf;
-    gear_temp = x.n_g(k);
-    if gear_temp == 1
-       H_down = Inf;
-    else
-       x.n_g(k) = x.n_g(k) - 1;
-       u.T_f(k) = T_f_opt(x, u, lambda, k);
-       u.F_b(k) = F_b_opt(lambda,k);
-       H_down = H(x, k, lambda, u);
-    end
-    x.n_g(k) = gear_temp;
-    if gear_temp == 5
-       H_up = Inf;
-    else
-       x.n_g(k) = x.n_g(k - 1) + 1;
-       u.T_f(k) = T_f_opt(x, u, lambda, k);
-       u.F_b(k) = F_b_opt(lambda, k);
-       H_up = H(x, k, lambda, u);
-    end
-    x.n_g(k) = gear_temp;
-    u.T_f(k) = T_f_opt(x, u, lambda, k);
-    u.F_b(k) = F_b_opt(lambda, k);
-    H_sus = H(x, k, lambda, u);
 
-    [~, idx] = min([H_down, H_sus, H_up]);
-    u_g = idx - 2;
-end
 
 function dLdv = calc_dLdv(x,k)
     % Calculate dωf/dvh at k+1
@@ -458,57 +397,10 @@ function [x, lambda] = update_states_and_costates(x, u, lambda, k)
 end
 
 
-function p = p1(x,k)
-    global I_g 
-    % coefficient of T_f^2 term (κ2,j terms)
-    w_c = 0.5;  % Make sure these global variables are accessible
-    kappa = [0.1, 0.01, 0.001;    
-             0.05, 0.005, 0.0005; 
-             0.01, 0.001, 0.0001];
-    
-    p = kappa(3,1) + kappa(3,2)*w_f(x,k) + kappa(3,3)*w_f(x,k)^2 + w_c * I_g(x.n_g(k))^2;
-end
 
-function p = p2(x, u, lambda, k)
-    % coefficient of T_f term (κ1,j terms)
-    global eta_t M r_w I_g
-    w_c = 0.5;
-    kappa = [0.1, 0.01, 0.001;    
-             0.05, 0.005, 0.0005; 
-             0.01, 0.001, 0.0001];
-    p = (kappa(2,1) + kappa(2,2)*w_f(x,k) + kappa(2,3)*w_f(x,k)^2) + ...
-        lambda(k) * eta_t/(M*r_w) * I_g(x.n_g(k)) - ...
-        2*w_c * I_g(x.n_g(k)) * I_g(x.n_g(k-1)) * u.T_f(k-1);
-end
-
-function p = p3()
-    w_c = 0.5;
-    p = w_c;
-end
-
-function p = p4(lambda, k)
-    global M
-    p = -lambda(k)/M;
-end
-
-function p = p5(x, k, lambda, u)
-    w_r = 1;
-    v_ref = 30;
-    w_c = 0.5;
-    kappa = [0.1, 0.01, 0.001;    
-             0.05, 0.005, 0.0005; 
-             0.01, 0.001, 0.0001];
-             
-    p = (kappa(1,1) + kappa(1,2)*w_f(x,k) + kappa(1,3)*w_f(x,k)^2) + ...
-        w_r * (x.v_h(k) - v_ref)^2 - ...
-        lambda(k) * get_accelerations(x, k) + ...
-        w_c * (u.T_f(k-1) * I_g(x.n_g(k-1)))^2;
-end
-
-%% MAIN HRLPERS
+%% MAIN HELPERS
 function WF = w_f(x,k)
     global I_g r_w w_f_max
-    class(x.n_g(k))
     WF = min(30/(pi*r_w) * I_g(x.n_g(k)) * x.v_h(k), w_f_max);
 end
 
@@ -550,13 +442,11 @@ function val = v_h_m3(x, k)
     val = x.v_h(k) + eta_t * T_w_max(x,k) - get_accelerations(x, k); % (13c)
 end
 
-function val = T_max(x, k)
+function val = T_max(x, k) % Need to calculate v_h_max(k + 1) from 12 - 13
     global M r_w eta_t v_h_max dt
     val = min(T_f_max(x,k), ...
     ((v_h_max(k+1) - x.v_h(k))/dt + get_accelerations(x,k)) * M*r_w/eta_t);
 end
 
-function val = H(x, u, lambda, k)
-    val = p1(x,k)*u.T_f(k)^2 + p2(x, u, lambda, k)*u.T_f(k) + p3()*u.F_b(x,k)^2 + p4(lambda,k)*u.F_b(k) + p5(x, k, lambda, u);
-end
+
 %H = @(x,u,k) p1(x,k)*u.T_f(k)^2 + p2(x,k)*u.T_f(k) + p3(x,k)*u.F_b(x,k)^2 + p4(x,k)*u.F_b(k) + p5(x,k);
