@@ -34,13 +34,13 @@ function [F, lambda_final] = forward_simulation(x, v_f, phi, lambda_1, N, k)
     % Forward simulation from current time k to k+N
     for n = k:(k+N)
         % Get optimal control using PMP
-        u_opt = calculate_optimal_control(x_sim, lambda(n), n);
+        u_opt = calculate_optimal_control(x_sim, lambda, n);
         
         % Update state
         x_sim = update_states(x_sim, u_opt, n);
         
         % Update costate
-        lambda(n + 1) = update_costate(lambda(n), x_sim, n);
+        lambda(n + 1) = getLambda(x_sim, lambda, n);
     end
     
     % Calculate F using terminal values
@@ -92,16 +92,18 @@ function u_opt = calculate_optimal_control(x_sim, lambda, k)
 end
 
 function x_sim = update_states(x_sim, u_opt, n) % need T_max vhmax dont forget
-    % Speed update (f1)
-    x_sim() = (eta_t / (M * r_w)) * u.T_f(k) * I_g(x.n_g(k)) - ...
-           (u.F_b(k) / M) - get_accelerations(x, k);
+    global eta_t M r_w I_g dt
+    % Speed update 
+    x_sim.v_h(n + 1) = (eta_t / (M * r_w)) * u_opt(1) * I_g(x.n_g(n)) - ...
+           (u_opt(2) / M) - get_accelerations(x, n);
     
-    % Position update (f2)
-    f(2) = x.v_h(k);
+    % Position update 
+    x_sim.s_h(n + 1) = x_sim.s_h(n) + x_sim.v_h(n)*dt;
     
-    % Gear position update with bounds (f3)
-    f(3) = max(1, min(x.n_g(k) + u.u_g(k), length(I_g)));
+    % Gear position update with bounds 
+    x_sim.n_g(n + 1) = max(1, min(x.n_g(k) + u_opt(3), length(I_g)));
 end
+
 %% P - FUNCTIONS
 
 function p = p1(x,k)

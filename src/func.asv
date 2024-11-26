@@ -40,7 +40,7 @@ function [F, lambda_final] = forward_simulation(x, v_f, phi, lambda_1, N, k)
         x_sim = update_states(x_sim, u_opt, n);
         
         % Update costate
-        lambda(n + 1) = update_costate(lambda(n), x_sim, n);
+        lambda(n + 1) = update_costate(x_sim, lambda(n), n);
     end
     
     % Calculate F using terminal values
@@ -58,19 +58,54 @@ function u_opt = calculate_optimal_control(x_sim, lambda, k)
     if current_gear == 1
     H_sus = H(x, lambda, T_f_opt(x_sim,lambda,k), F_b_opt(lambda,k), k);
     x_sim.n_g(k) = x_sim.n_g(k) + 1;
-    H_up = H(x, lambda, T_f_opt(x_,lambda,k), F_b_opt(lambda,k), k);
+    H_up = H(x, lambda, T_f_opt(x_sim,lambda,k), F_b_opt(lambda,k), k);
     [~, idx] = min([H_sus, H_up]);
     u_g = idx - 1;
     x_sim.n_g(k) = current_gear + u_g;
-    u_opt = []
+    u_opt = [T_f_opt(x_sim,lambda,k) F_b_opt(lambda,k) u_g];
     return
     end
     if current_gear == 5
-
+    x_sim.n_g(k) = x_sim.n_g(k) - 1;
+    H_down = H(x_sim, lambda, T_f_opt(x_sim,lambda,k), F_b_opt(lambda,k), k);
+    x_sim.n_g(k) = current_gear;
+    H_sus = H(x_sim, lambda, T_f_opt(x_sim,lambda,k), F_b_opt(lambda,k), k);
+    [~, idx] = min([H_down, H_sus]);
+    u_g = idx - 2; % Maps [1,2] to [-1,0]
+    x_sim.n_g(k) = current_gear + u_g;
+    u_opt = [T_f_opt(x_sim,lambda,k) F_b_opt(lambda,k) u_g];
+    return
     end
     if current_gear > 1 && current_gear < 5
-    
+    x_sim.n_g(k) = x_sim.n_g(k) - 1;
+    H_down = H(x_sim, lambda, T_f_opt(x_sim,lambda,k), F_b_opt(lambda,k), k);
+    x_sim.n_g(k) = current_gear;
+    H_sus = H(x_sim, lambda, T_f_opt(x_sim,lambda,k), F_b_opt(lambda,k), k);
+    x_sim.n_g(k) = x_sim.n_g(k) + 1;
+    H_up = H(x_sim, lambda, T_f_opt(x_sim,lambda,k), F_b_opt(lambda,k), k);
+    [~, idx] = min([H_down, H_sus, H_up]);
+    u_g = idx - 2; % Maps [1,2,3] to [-1,0,1]
+    x_sim.n_g(k) = current_gear + u_g;
+    u_opt = [T_f_opt(x_sim,lambda,k) F_b_opt(lambda,k) u_g];
+    return
     end
+end
+
+function x_sim = update_states(x_sim, u_opt, n) % need T_max vhmax dont forget
+    global eta_t M r_w I_g dt
+    % Speed update 
+    x_sim.v_h(n + 1) = (eta_t / (M * r_w)) * u_opt(1) * I_g(x.n_g(n)) - ...
+           (u_opt(2) / M) - get_accelerations(x, n);
+    
+    % Position update 
+    x_sim.s_h(n + 1) = x_sim.s_h(n) + x_sim.v_h(n)*dt;
+    
+    % Gear position update with bounds 
+    x_sim.n_g(n + 1) = max(1, min(x.n_g(k) + u_opt(3), length(I_g)));
+end
+function lambda = update_costate(x_sim, lambda, n)
+A_n
+
 end
 %% P - FUNCTIONS
 
