@@ -98,3 +98,7 @@ function [x, lambda] = update_states_and_costates(x, lambda, k)
     % 2. Update states using optimal control
     % 3. Update co-states using equations (21a) and (21b)
 end
+%%
+    % kappa = [0.1, 0.01, 0.001;    
+    %          0.05, 0.005, 0.0005; 
+    %          0.01, 0.001, 0.0001];

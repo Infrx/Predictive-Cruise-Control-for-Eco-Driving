@@ -10,7 +10,7 @@ eta_t = 0.94;            % Drive train total efficiency
 r_w = 0.33;              % Dynamic tire radius (m)
 g = 9.81;                % Gravitational acceleration (m/s^2)
 alpha = 0;               % Road slope (flat road)
-t_react = 1.5;           % Reaction time (s)
+t_react = 0.5;           % Reaction time (s)
 % Acceleration limits
 a_h_max = 0.4 * g;       % Maximum allowed acceleration (m/s^2)
 a_h_bmax = g;
@@ -21,7 +21,7 @@ w_f_max = 733;           % Max Engine Speed (rad/sec)
 v_lim = 30;
 % Time settings
 dt = 0.1;                % Time step (seconds)
-N = 500;                 % Number of time steps
+N = 200;                 % Number of time steps
 time = (0:N-1)*dt;       % Time vector
 t_react = 0.8;           % Reaction Time (seconds)
 % Define the state struct x
@@ -136,22 +136,29 @@ for k = 2:N-1 - 30
     end
     % Update the states using the limited acceleration
     % PMP STUFF
-    [Lambda_U, Lambda_L, F_A, F_B] = initPMP(x, u, 10, 30, 1, k);
+    [L_U, L_L, F_A, F_B] = initPMP(x, u, 10, 30, 1, k);
+    L_OPT = bisection(x, u, v_f, 1, 10, L_U, L_L, F_A, F_B, k);
     %
-    if k > 2
-        x.v_h(k+1) = min(min(x.v_h(k) + total_acceleration * dt, v_lim) , v_h_m3(x,k));
-    else
-        x.v_h(k+1) = min(x.v_h(k) + total_acceleration * dt, v_lim); % Speed update
-    end
-    x.s_h(k+1) = x.s_h(k) + x.v_h(k) * dt;              % Position update
-    x.n_g(k+1) = f_update(3);                           % Gear position update
-    
+    %if k > 2
+        %x.v_h(k+1) = min(min(x.v_h(k) + total_acceleration * dt, v_lim) , v_h_m3(x,k));
+    %else
+        %x.v_h(k+1) = min(x.v_h(k) + total_acceleration * dt, v_lim); % Speed update
+    %end
+    %x.s_h(k+1) = x.s_h(k) + x.v_h(k) * dt;              % Position update
+    %x.n_g(k+1) = f_update(3);                           % Gear position update
+    [u_n, x_n] = apply_control(x, u, L_OPT, k);
+    x.v_h(k+1) = x_n(1);
+    x.s_h(k+1) = x_n(2);
+    x.n_g(k+1) = x_n(3);
+    u.T_f(k + 1) = u_n(1);
+    u.F_b(k + 1) = u_n(2);
+    u.u_g(k + 1) = u_n(3);
     px.s_p(k + 1) = px.s_p(k) + px.v_p(k)*dt;
     px.v_p(k + 1) = px.v_p(k);
 
-    u.F_b(k + 1) = u.F_b(k);
-    u.T_f(k + 1) = u.T_f(k);
-    u.u_g(k + 1) = u.u_g(k);
+    %u.F_b(k + 1) = u.F_b(k);
+    %u.T_f(k + 1) = u.T_f(k);
+    %u.u_g(k + 1) = u.u_g(k);
 
     %%%%
 end
@@ -192,8 +199,8 @@ function value = getVhmax(x, px, k)
     global dt t_react a_h_max a_h_bmax eta_t r_w M v_lim
     c = px.s_p(k) - x.s_h(k - 1) - x.v_h(k - 1)*dt;
     vhm1 = c/t_react;
-    vhm2 = -a_h_max*t_react + sqrt(a_h_max^2 * t_react^2 + 2*a_h_max*c + a_h_max/a_h_bmax * px.v_p(k)^2);
-    vhm3 = x.v_h(k - 1) + eta_t/(M*r_w) - get_accelerations(x,k);
+    vhm2 = a_h_max*t_react + sqrt(a_h_max^2 * t_react^2 + 2*a_h_max*c + (a_h_max/a_h_bmax)* px.v_p(k)^2);
+    vhm3 = x.v_h(k - 1) + (eta_t/(M*r_w))*T_w_max(x, k) - get_accelerations(x,k);
     value = min([vhm1, vhm2, vhm3, v_lim]);
 end
 
@@ -297,14 +304,14 @@ function val = T_w_max(x, k)
     val = T_peak * I_g(x.n_g(k)) * eta_t;
 end
 function val = v_h_m3(x, k)
-    global eta_t 
-    val = x.v_h(k) + eta_t * T_w_max(x,k) - get_accelerations(x, k); % (13c)
+    global eta_t M r_w
+    val = x.v_h(k) + eta_t/(M*r_w) * T_w_max(x,k) - get_accelerations(x, k); % (13c)
 end
 
 function val = T_max(x, k) % Need to calculate v_h_max(k + 1) from 12 - 13
     global M r_w eta_t v_h_max dt vh_max
     val = min(T_f_max(x,k), ...
-    ((vh_max(k+1) - x.v_h(k))/dt + get_accelerations(x,k)* M*r_w/eta_t)) ;
+    (((vh_max(k+1) - x.v_h(k))/dt + get_accelerations(x,k))* M*r_w/eta_t)) ;
 end
 
 
@@ -313,23 +320,18 @@ end
 %% P - Functions
 
 function p = p1(x,k)
-    global I_g 
+    global I_g kappa
     % coefficient of T_f^2 term (κ2,j terms)
     w_c = 0.5;  % Make sure these global variables are accessible
-    kappa = [0.1, 0.01, 0.001;    
-             0.05, 0.005, 0.0005; 
-             0.01, 0.001, 0.0001];
+
     
     p = kappa(3,1) + kappa(3,2)*w_f(x,k) + kappa(3,3)*w_f(x,k)^2 + w_c * I_g(x.n_g(k))^2;
 end
 
 function p = p2(x, u, lambda, k)
     % coefficient of T_f term (κ1,j terms)
-    global eta_t M r_w I_g
+    global eta_t M r_w I_g kappa
     w_c = 0.5;
-    kappa = [0.1, 0.01, 0.001;    
-             0.05, 0.005, 0.0005; 
-             0.01, 0.001, 0.0001];
     p = (kappa(2,1) + kappa(2,2)*w_f(x,k) + kappa(2,3)*w_f(x,k)^2) + ...
         lambda(k) * eta_t/(M*r_w) * I_g(x.n_g(k)) - ...
         2*w_c * I_g(x.n_g(k)) * I_g(x.n_g(k-1)) * u.T_f(k-1);
@@ -346,14 +348,10 @@ function p = p4(lambda, k)
 end
 
 function p = p5(x, u, lambda, k)
-    global I_g
+    global I_g kappa
     w_r = 1;
     v_ref = 30;
-    w_c = 0.5;
-    kappa = [0.1, 0.01, 0.001;    
-             0.05, 0.005, 0.0005; 
-             0.01, 0.001, 0.0001];
-             
+    w_c = 0.5;           
     p = (kappa(1,1) + kappa(1,2)*w_f(x,k) + kappa(1,3)*w_f(x,k)^2) + ...
         w_r * (x.v_h(k) - v_ref)^2 - ...
         lambda(k) * get_accelerations(x, k) + ...
@@ -368,15 +366,13 @@ function T_f = T_f_opt(x, u, lambda, k)
     if p1_ > 0
         T_f_candidate = -p2_/(2*p1_);
         T_f = min(max(T_f_candidate, 0), T_max(x,k));
-    end
-    if p1_ < 0
+    elseif p1_ < 0
         if -p2_/(2*p1_) <= T_max(x,k)
             T_f = T_max(x,k);
         else
             T_f = 0;
         end
-    end
-    if p1_ == 0
+    elseif p1_ == 0
         if p2_ >= 0
             T_f = 0;
         else
@@ -414,11 +410,11 @@ end
 % Function to get bounds [ΛL, ΛU] based on equations (32)-(37)
 
 function [Lambda_U, Lambda_L, F_A, F_B] = initPMP(x, u, N,v_f, phi, k)
-    B_min = -100;  % Initialize to conservative value
-    B_max = 100;   % Initialize to conservative value
+    B_min = -100000;  % Initialize to conservative value
+    B_max =  100000;   % Initialize to conservative value
 
     % Calculate q
-    q = 15; %max(abs(x.v_h(k) - v_f)); % Let it be 15 for test
+    q = 20; %max(abs(x.v_h(k) - v_f)); % Let it be 15 for test
     
     % Terminal conditions for λmax and λmin
     lambda_max_N1 = 2*phi*q;
@@ -432,8 +428,8 @@ function [Lambda_U, Lambda_L, F_A, F_B] = initPMP(x, u, N,v_f, phi, k)
     % Set the upper and lower bounds for λ(1)
     Lambda_U = lambda_max;
     Lambda_L = lambda_min;
-    F_A = forward_simulation(x, u, v_f, phi, Lambda_U, N, k);
-    F_B = forward_simulation(x, u, v_f, phi, Lambda_L, N, k);
+    [F_A, ~] = forward_simulation(x, u, v_f, phi, Lambda_L, N, k);
+    [F_B, ~] = forward_simulation(x, u, v_f, phi, Lambda_U, N, k);
 end
 
 function [F, lambda_final] = forward_simulation(x, u, v_f, phi, lambda_1, N, k)
@@ -567,8 +563,8 @@ end
 function [u, x_sim] = update_states(x_sim, u, u_opt, n) % need T_max vhmax dont forget
     global eta_t M r_w I_g dt
     % Speed update 
-    x_sim.v_h(n + 1) = (eta_t / (M * r_w)) * u_opt(1) * I_g(x_sim.n_g(n)) - ...
-           (u_opt(2) / M) - get_accelerations(x_sim, n);
+    x_sim.v_h(n + 1) = x_sim.v_h(n) + ((eta_t / (M * r_w)) * u_opt(1) * I_g(x_sim.n_g(n)) - ...
+           (u_opt(2) / M) - get_accelerations(x_sim, n))*dt;
     
     % Position update 
     x_sim.s_h(n + 1) = x_sim.s_h(n) + x_sim.v_h(n)*dt;
@@ -581,3 +577,35 @@ function [u, x_sim] = update_states(x_sim, u, u_opt, n) % need T_max vhmax dont 
     u.u_g(n + 1) = u_opt(3);
 end
 
+function lambda_optimal = bisection(x, u, v_f, phi, N, L_U, L_L, F_A, F_B, k)
+    r = 1;
+    it = 20;
+    lambda = (L_U + L_L)/2;
+    [F, ~]= forward_simulation(x, u, v_f, phi, lambda, N, k);
+    while true
+        if abs(F) <= 10^(-6)
+            break
+        end
+        
+        if F*F_A < 0
+            L_U = lambda;
+        else
+            L_L = lambda;
+        end
+        r = r + 1;
+        lambda = (L_U + L_L)/2;
+        
+        [F, ~] = forward_simulation(x, u, v_f, phi, lambda, N, k);
+        [F_A, ~]= forward_simulation(x, u, v_f, phi, L_L, N, k);
+    end
+
+    lambda_optimal = lambda;
+end
+
+function [u_next, x_next] = apply_control(x, u, lambda_opt, k)
+    lambda = lambda_opt*ones(k,1);
+    u_opt = calculate_optimal_control(x, u, lambda, k);
+    [u, x] = update_states(x, u, u_opt, k);
+    u_next = [u.T_f(k + 1) u.F_b(k + 1) u.u_g(k + 1)];
+    x_next = [x.v_h(k + 1) x.s_h(k + 1) x.n_g(k + 1)];
+end
