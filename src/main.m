@@ -1,6 +1,6 @@
 % Vehicle Model Parameters
 clearvars; clc;
-global M rho A_f C_d f_rr eta_t r_w g alpha t_react a_h_max a_h_bmax F_b_max T_peak w_f_peak w_f_max v_lim I_g v_h_max dt vh_max kappa v_ref w_r;
+global M rho A_f C_d f_rr eta_t r_w g alpha t_react a_h_max a_h_bmax F_b_max T_peak w_f_peak w_f_max v_lim I_g v_h_max dt vh_max kappa v_ref w_r w_c;
 M = 1420;                % Vehicle mass (kg)
 rho = 1.205;             % Air density (kg/m^3)
 A_f = 1.7;               % Frontal area (m^2)
@@ -48,7 +48,7 @@ px.s_p = zeros(N, 1);      % Vehicle position (m)
 
 % Define the control input struct u
 u = struct();
-u.T_f = 150*ones(N, 1); % Engine torque (Nm)
+u.T_f = zeros(N, 1); % Engine torque (Nm)
 u.F_b = zeros(N, 1);      % Brake force (N)
 u.u_g = zeros(N, 1);      % Gearshift command (shift, sustain, upshift)
 % Gear ratio array (I_g) for each gear (AMT with 5 gears)
@@ -77,7 +77,8 @@ I_g = [17.23, 9.78, 6.42, 4.89, 4.08];  % Gear ratios for 5 gears
 x.v_h(1) = 0;              % Initial speed (m/s)
 x.s_h(1) = 0;              % Initial position (m)
 x.n_g(1) = 1;              % Initial gear (starting in gear 1)
-
+u.T_f(1) = 50;
+u.T_f(2) = 50;
 px.v_p(1) = 15;
 px.s_p(1) = 40;
 px.v_p(2) = 15;
@@ -95,17 +96,20 @@ vh_max(2) = 30;
 %% Fuel Rate Polynomial
 %kappa = [0.1, 0.01, 0.001;    
 %         0.05, 0.005, 0.0005; 
-%         0.01, 0.001, 0.0001];
+%        0.01, 0.001, 0.0001];
 kappa = [0, 0, 0;    
          0, 0, 0; 
          0, 0, 0];
+%kappa = [0.0001, 0.00001, 0.000001;    
+%         0.0005, 0.00005, 0.000005; 
+ %        0.0001, 0.00001, 0.000001];
 TWF = @(k) [T_f(k)^0 * w_f(k)^0, T_f(k)^0 * w_f(k)^1, T_f(k)^0 * w_f(k)^2;
             T_f(k)^1 * w_f(k)^0, T_f(k)^1 * w_f(k)^1, T_f(k)^1 * w_f(k)^2;
             T_f(k)^2 * w_f(k)^0, T_f(k)^2 * w_f(k)^1, T_f(k)^2 * w_f(k)^2];
 m_fuel_dot = @(k) kappa .* TWF(k); % (7)
 %% Penalties / Need to refactor ASAP
-w_r = 1;
-w_c = 0.5;
+w_r = 2;
+w_c = 0.1;
 v_ref = 30;
 v_f = 15; % terminal speed needs to be clarified
 phi = 1;
@@ -122,10 +126,6 @@ J = @(x, u, k) L(x, u, k)*dt + phi*(x.v_h(k + 1) - v_f)^2;  % (4)
 
 for k = 2:N-1 - 30
     % Apply physical constraints to the control inputs
-    u.T_f(k) = min(max(u.T_f(k), 0), T_f_max(x, k));   % Constrain engine torque based on wf
-    % Compute the current acceleration based on all forces
-    f_update = vehicle_dynamics(x, u, k);                       % Get the full dynamics output
-    total_acceleration = f_update(1);           % Extract the total acceleration (first element)
     vh_max(k + 1) = getVhmax(x, px, k);
     % PMP STUFF
     [L_U, L_L, F_A, F_B] = initPMP(x, u, 10, v_f, 1, k);
@@ -143,9 +143,9 @@ for k = 2:N-1 - 30
     x.v_h(k + 1) = x_n(1);
     x.s_h(k + 1) = x_n(2);
     x.n_g(k + 1) = x_n(3);
-    u.T_f(k + 1) = u_n(1);
-    u.F_b(k + 1) = u_n(2);
-    u.u_g(k + 1) = u_n(3);
+    u.T_f(k) = u_n(1);
+    u.F_b(k) = u_n(2);
+    u.u_g(k) = u_n(3);
     px.s_p(k + 1) = px.s_p(k) + px.v_p(k)*dt;
     px.v_p(k + 1) = px.v_p(k);
 
@@ -313,25 +313,22 @@ end
 %% P - Functions
 
 function p = p1(x,k)
-    global I_g kappa
+    global I_g kappa w_c
     % coefficient of T_f^2 term (κ2,j terms)
-    w_c = 0.5;  % Make sure these global variables are accessible
 
-    
     p = kappa(3,1) + kappa(3,2)*w_f(x,k) + kappa(3,3)*w_f(x,k)^2 + w_c * I_g(x.n_g(k))^2;
 end
 
 function p = p2(x, u, lambda, k)
     % coefficient of T_f term (κ1,j terms)
-    global eta_t M r_w I_g kappa
-    w_c = 0.5;
+    global eta_t M r_w I_g kappa w_c
     p = (kappa(2,1) + kappa(2,2)*w_f(x,k) + kappa(2,3)*w_f(x,k)^2) + ...
         lambda(k) * eta_t/(M*r_w) * I_g(x.n_g(k)) - ...
         2*w_c * I_g(x.n_g(k)) * I_g(x.n_g(k-1)) * u.T_f(k-1);
 end
 
 function p = p3()
-    w_c = 0.5;
+    global w_c
     p = w_c;
 end
 
@@ -341,9 +338,7 @@ function p = p4(lambda, k)
 end
 
 function p = p5(x, u, lambda, k)
-    global I_g kappa v_ref
-    w_r = 1;
-    w_c = 0.5;           
+    global I_g kappa v_ref w_r w_c           
     p = (kappa(1,1) + kappa(1,2)*w_f(x,k) + kappa(1,3)*w_f(x,k)^2) + ...
         w_r * (x.v_h(k) - v_ref)^2 - ...
         lambda(k) * get_accelerations(x, k) + ...
@@ -588,7 +583,7 @@ function lambda_optimal = bisection(x, u, v_f, phi, N, L_U, L_L, F_A, F_B, k)
         else
             L_L = lambda;
         end
-        r = r + 1;
+        r = r + 1
         lambda = (L_U + L_L)/2;
         
         [F, ~] = forward_simulation(x, u, v_f, phi, lambda, N, k);
@@ -602,6 +597,6 @@ function [u_next, x_next] = apply_control(x, u, lambda_opt, k)
     lambda = lambda_opt*ones(k,1);
     u_opt = calculate_optimal_control(x, u, lambda, k);
     [u, x] = update_states(x, u, u_opt, k);
-    u_next = [u.T_f(k + 1) u.F_b(k + 1) u.u_g(k + 1)];
+    u_next = [u.T_f(k) u.F_b(k) u.u_g(k)];
     x_next = [x.v_h(k + 1) x.s_h(k + 1) x.n_g(k + 1)];
 end
