@@ -18,15 +18,15 @@ F_b_max = M*a_h_bmax;    % Calculated from F=ma, where a = 0.4*g
 T_peak = 260;            % Peak Engine Torque (NM)
 w_f_peak = 315;          % Peak Engine Speed (rad/sec)
 w_f_max = 733;           % Max Engine Speed (rad/sec)
-v_lim = 30;
+v_lim = 54;
 % Time settings
 dt = 0.1;                % Time step (seconds)
-N = 200;                 % Number of time steps
+N = 130;                 % Number of time steps
 time = (0:N-1)*dt;       % Time vector
 t_react = 0.8;           % Reaction Time (seconds)
 % Define the state struct x
 x = struct();
-x.v_h = zeros(N, 1);      % Vehicle speed (m/s)
+x.v_h = 20*ones(N, 1);      % Vehicle speed (m/s)
 x.s_h = zeros(N, 1);      % Vehicle position (m)
 x.n_g = ones(N, 1);      % Gear position (initialized to gear 0 for simplicity)
 x_ = struct();
@@ -48,7 +48,7 @@ px.s_p = zeros(N, 1);      % Vehicle position (m)
 
 % Define the control input struct u
 u = struct();
-u.T_f = 200* ones(N, 1); % Engine torque (Nm)
+u.T_f = 150*ones(N, 1); % Engine torque (Nm)
 u.F_b = zeros(N, 1);      % Brake force (N)
 u.u_g = zeros(N, 1);      % Gearshift command (shift, sustain, upshift)
 % Gear ratio array (I_g) for each gear (AMT with 5 gears)
@@ -78,10 +78,10 @@ x.v_h(1) = 0;              % Initial speed (m/s)
 x.s_h(1) = 0;              % Initial position (m)
 x.n_g(1) = 1;              % Initial gear (starting in gear 1)
 
-px.v_p(1) = 20;
-px.s_p(1) = 100;
-px.v_p(2) = 20;
-px.s_p(2) = 100;
+px.v_p(1) = 40;
+px.s_p(1) = 20;
+px.v_p(2) = 40;
+px.s_p(2) = 20;
 
 vh_max(1) = 30;
 vh_max(2) = 30;
@@ -93,9 +93,9 @@ vh_max(2) = 30;
 
 
 %% Fuel Rate Polynomial
-kappa = [0.1, 0.01, 0.001;    
-         0.05, 0.005, 0.0005; 
-         0.01, 0.001, 0.0001];
+kappa = [0, 0, 0;    
+         0, 0, 0; 
+         0, 0, 0];
 TWF = @(k) [T_f(k)^0 * w_f(k)^0, T_f(k)^0 * w_f(k)^1, T_f(k)^0 * w_f(k)^2;
             T_f(k)^1 * w_f(k)^0, T_f(k)^1 * w_f(k)^1, T_f(k)^1 * w_f(k)^2;
             T_f(k)^2 * w_f(k)^0, T_f(k)^2 * w_f(k)^1, T_f(k)^2 * w_f(k)^2];
@@ -103,12 +103,12 @@ m_fuel_dot = @(k) kappa .* TWF(k); % (7)
 %% Penalties / Need to refactor ASAP
 w_r = 1;
 w_c = 0.5;
-v_ref = 30;
-v_f = 30; % terminal speed needs to be clarified
+v_ref = 35;
+v_f = 15; % terminal speed needs to be clarified
 phi = 1;
 P = @(x, u, k) (u.T_f(k) * I_g(x.n_g(k)) - u.T_f(k - 1) * I_g(x.n_g(k - 1)))^2 + u.F_b(k)^2; % (6)
 L = @(x, u, k) m_fuel_dot(k) + w_r*(x.v_h(k) - v_ref)^2 + w_c*P(x, u, k); % (5)
-J = @(x, u, k) L(x, u, k)*dt + phi*(x.v_h(k + 1) - v_f)^2;  % (4)
+J = @(x, u, k) L(x, u, k)*dt + phi(x.v_h(k + 1) - v_f)^2;  % (4)
 
 
 % Maximum torque constraint (26)
@@ -125,19 +125,13 @@ for k = 2:N-1 - 30
     total_acceleration = f_update(1);           % Extract the total acceleration (first element)
     vh_max(k + 1) = getVhmax(x, px, k);
     % Apply maximum acceleration limit
-    if total_acceleration > a_h_max
-        % Scale down the engine torque to enforce acceleration limit
-        scale_factor = a_h_max / total_acceleration;
-        u.T_f(k) = u.T_f(k) * scale_factor;  % Scale down the engine torque
-        
-        % Recalculate the total acceleration with the scaled torque
-        f_update = vehicle_dynamics(x, u, k);                    
-        total_acceleration = f_update(1);  % Updated acceleration after scaling
-    end
+
+   
     % Update the states using the limited acceleration
     % PMP STUFF
-    [L_U, L_L, F_A, F_B] = initPMP(x, u, 10, 30, 1, k);
+    [L_U, L_L, F_A, F_B] = initPMP(x, u, 10, v_f, 1, k);
     L_OPT = bisection(x, u, v_f, 1, 10, L_U, L_L, F_A, F_B, k);
+    lambda(k) = L_OPT;
     %
     %if k > 2
         %x.v_h(k+1) = min(min(x.v_h(k) + total_acceleration * dt, v_lim) , v_h_m3(x,k));
@@ -150,9 +144,9 @@ for k = 2:N-1 - 30
     x.v_h(k+1) = x_n(1);
     x.s_h(k+1) = x_n(2);
     x.n_g(k+1) = x_n(3);
-    u.T_f(k + 1) = u_n(1);
-    u.F_b(k + 1) = u_n(2);
-    u.u_g(k + 1) = u_n(3);
+    u.T_f(k+1) = u_n(1);
+    u.F_b(k+1) = u_n(2);
+    u.u_g(k+1) = u_n(3);
     px.s_p(k + 1) = px.s_p(k) + px.v_p(k)*dt;
     px.v_p(k + 1) = px.v_p(k);
 
@@ -199,9 +193,9 @@ function value = getVhmax(x, px, k)
     global dt t_react a_h_max a_h_bmax eta_t r_w M v_lim
     c = px.s_p(k) - x.s_h(k - 1) - x.v_h(k - 1)*dt;
     vhm1 = c/t_react;
-    vhm2 = -a_h_max*t_react + sqrt(a_h_max^2 * t_react^2 + 2*a_h_max*c + (a_h_max/a_h_bmax)* px.v_p(k)^2);
-    vhm3 = x.v_h(k - 1) + eta_t/(M*r_w)*T_w_max(x, k) - get_accelerations(x,k);
-    value = min([vhm1, vhm2, vhm3, v_lim])
+    vhm2 = a_h_max*t_react + sqrt(a_h_max^2 * t_react^2 + 2*a_h_max*c + (a_h_max/a_h_bmax)* px.v_p(k)^2);
+    vhm3 = x.v_h(k - 1) + (eta_t/(M*r_w))*T_w_max(x, k) - get_accelerations(x,k);
+    value = min([vhm1, vhm2, vhm3, v_lim]);
 end
 
 
@@ -221,7 +215,7 @@ function dLdv = calc_dLdv(x, u ,k)
     % Calculate dωf/dvh at k+1
     global I_g v_ref r_w w_r kappa
     dw_dv = 30/(pi*r_w) * I_g(x.n_g(k+1));
-    dwr_dv = 2*w_r*(x.v_h(k) - v_ref);
+    dwr_dv = 2*w_r*(x.v_h(k + 1) - v_ref);
     % Calculate fuel consumption derivative
     dmdot_dv = 0;
     for i = 0:2
@@ -243,7 +237,7 @@ function B = get_B(x, u, k)
 end
 function A = get_A(x, k)
     global rho C_d A_f M dt
-    A = 1 - (rho*C_d*A_f/M)*x.v_h(k)*dt;
+    A = 1 - (rho*C_d*A_f/M)*x.v_h(k + 1)*dt;
 end
 function lambda_ = getLambda(x, u, lambda, k)
     A = get_A(x, k);
@@ -348,9 +342,8 @@ function p = p4(lambda, k)
 end
 
 function p = p5(x, u, lambda, k)
-    global I_g kappa
+    global I_g kappa v_ref
     w_r = 1;
-    v_ref = 30;
     w_c = 0.5;           
     p = (kappa(1,1) + kappa(1,2)*w_f(x,k) + kappa(1,3)*w_f(x,k)^2) + ...
         w_r * (x.v_h(k) - v_ref)^2 - ...
@@ -414,7 +407,7 @@ function [Lambda_U, Lambda_L, F_A, F_B] = initPMP(x, u, N,v_f, phi, k)
     B_max =  100000;   % Initialize to conservative value
 
     % Calculate q
-    q = 20; %max(abs(x.v_h(k) - v_f)); % Let it be 15 for test
+    q = 30; %max(abs(x.v_h(k) - v_f)); % Let it be 15 for test
     
     % Terminal conditions for λmax and λmin
     lambda_max_N1 = 2*phi*q;
@@ -430,6 +423,10 @@ function [Lambda_U, Lambda_L, F_A, F_B] = initPMP(x, u, N,v_f, phi, k)
     Lambda_L = lambda_min;
     [F_A, ~] = forward_simulation(x, u, v_f, phi, Lambda_L, N, k);
     [F_B, ~] = forward_simulation(x, u, v_f, phi, Lambda_U, N, k);
+
+    if F_A*F_B > 0
+        fprintf("Sign error Fa and Fb");
+    end
 end
 
 function [F, lambda_final] = forward_simulation(x, u, v_f, phi, lambda_1, N, k)
@@ -572,17 +569,17 @@ function [u, x_sim] = update_states(x_sim, u, u_opt, n) % need T_max vhmax dont 
     % Gear position update with bounds 
     x_sim.n_g(n + 1) = max(1, min(x_sim.n_g(n) + u_opt(3), length(I_g)));
 
-    u.T_f(n + 1) = u_opt(1);
-    u.F_b(n + 1) = u_opt(2);
-    u.u_g(n + 1) = u_opt(3);
+    u.T_f(n) = u_opt(1);
+    u.F_b(n) = u_opt(2);
+    u.u_g(n) = u_opt(3);
 end
 
 function lambda_optimal = bisection(x, u, v_f, phi, N, L_U, L_L, F_A, F_B, k)
     r = 1;
-    it = 100;
+    it = 20;
     lambda = (L_U + L_L)/2;
     [F, ~]= forward_simulation(x, u, v_f, phi, lambda, N, k);
-    while true 
+    while true
         if abs(F) <= 10^(-6)
             break
         end
@@ -596,7 +593,7 @@ function lambda_optimal = bisection(x, u, v_f, phi, N, L_U, L_L, F_A, F_B, k)
         lambda = (L_U + L_L)/2;
         
         [F, ~] = forward_simulation(x, u, v_f, phi, lambda, N, k);
-        %[F_A, ~]= forward_simulation(x, u, v_f, phi, L_L, N, k);
+        [F_A, ~]= forward_simulation(x, u, v_f, phi, L_L, N, k);
     end
 
     lambda_optimal = lambda;
@@ -608,5 +605,4 @@ function [u_next, x_next] = apply_control(x, u, lambda_opt, k)
     [u, x] = update_states(x, u, u_opt, k);
     u_next = [u.T_f(k + 1) u.F_b(k + 1) u.u_g(k + 1)];
     x_next = [x.v_h(k + 1) x.s_h(k + 1) x.n_g(k + 1)];
-
 end
