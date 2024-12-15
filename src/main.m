@@ -77,12 +77,14 @@ I_g = [17.23, 9.78, 6.42, 4.89, 4.08];  % Gear ratios for 5 gears
 x.v_h(1) = 0;              % Initial speed (m/s)
 x.s_h(1) = 0;              % Initial position (m)
 x.n_g(1) = 1;              % Initial gear (starting in gear 1)
-u.T_f(1) = 50;
-u.T_f(2) = 50;
-px.v_p(1) = 15;
-px.s_p(1) = 40;
-px.v_p(2) = 15;
-px.s_p(2) = 40;
+u.T_f(1) = 100;
+u.T_f(2) = 0;
+u.F_b(1) = 3000;
+u.F_b(2) = 0;
+px.v_p(1) = 5;
+px.s_p(1) = 15;
+px.v_p(2) = 5;
+px.s_p(2) = 15;
 
 vh_max(1) = 30;
 vh_max(2) = 30;
@@ -98,11 +100,13 @@ vh_max(2) = 30;
 %         0.05, 0.005, 0.0005; 
 %        0.01, 0.001, 0.0001];
 kappa = [0, 0, 0;    
-         0, 0, 0; 
-         0, 0, 0];
-%kappa = [0.0001, 0.00001, 0.000001;    
-%         0.0005, 0.00005, 0.000005; 
- %        0.0001, 0.00001, 0.000001];
+        0.001, 0, 0; 
+        1, 0, 0];
+% kappa = [
+%     0.145, 0.338, 0.007;    % κ0,j terms (constant in T_f)
+%     0.242, 0.215, 0.204;    % κ1,j terms (linear in T_f)
+%     0.008, 0.303, 0.0005    % κ2,j terms (quadratic in T_f)
+% ];
 TWF = @(k) [T_f(k)^0 * w_f(k)^0, T_f(k)^0 * w_f(k)^1, T_f(k)^0 * w_f(k)^2;
             T_f(k)^1 * w_f(k)^0, T_f(k)^1 * w_f(k)^1, T_f(k)^1 * w_f(k)^2;
             T_f(k)^2 * w_f(k)^0, T_f(k)^2 * w_f(k)^1, T_f(k)^2 * w_f(k)^2];
@@ -276,7 +280,7 @@ function get_accel = get_accelerations(x, k)
 end 
 
 function f = vehicle_dynamics(x, u, k)
-    global eta_t M r_w I_g
+    global eta_t M r_w I_g dt
 
     % Initialize f as a column vector
     f = zeros(3, 1);
@@ -371,7 +375,7 @@ function F_b = F_b_opt(lambda,k)
     global F_b_max
     p3_ = p3();
     p4_ = p4(lambda, k);
-    if p3() > 0
+    if p3_ > 0
         F_b_candidate = -p4_/(2*p3_);
         F_b = min(max(F_b_candidate, 0), F_b_max);
     end
@@ -382,13 +386,8 @@ end
 function [val, idx] = H(x, u, lambda, T_f, F_b, k)
     %  Hdrive and H brake sepeartly and take min
     % optimal control must be Tf 0 or 0 Fb
-    T_temp = T_f;
-    F_temp = F_b;
-    F_b = 0;
-    H_drive = p1(x, k)*T_f^2 + p2(x, u, lambda, k)*T_f + p3()*F_b^2 + p4(lambda, k)*F_b + p5(x, u, lambda, k);
-    F_b = F_temp;
-    T_f = 0;
-    H_brake = p1(x, k)*T_f^2 + p2(x, u, lambda, k)*T_f + p3()*F_b^2 + p4(lambda, k)*F_b + p5(x, u, lambda, k);
+    H_drive = p1(x, k)*T_f^2 + p2(x, u, lambda, k)*T_f + p5(x, u, lambda, k);
+    H_brake = p3()*F_b^2 + p4(lambda, k)*F_b + p5(x, u, lambda, k);
     [val, idx] = min([H_drive, H_brake]);
 end
 
@@ -398,7 +397,7 @@ end
 
 function [Lambda_U, Lambda_L, F_A, F_B] = initPMP(x, u, N,v_f, phi, k)
     B_min = -100000;  % Initialize to conservative value
-    B_max =  100000;   % Initialize to conservative value
+    B_max =  100000;  
 
     % Calculate q
     q = max(abs(x.v_h(k) - v_f)); % Let it be 15 for test
@@ -583,7 +582,7 @@ function lambda_optimal = bisection(x, u, v_f, phi, N, L_U, L_L, F_A, F_B, k)
         else
             L_L = lambda;
         end
-        r = r + 1
+        r = r + 1;
         lambda = (L_U + L_L)/2;
         
         [F, ~] = forward_simulation(x, u, v_f, phi, lambda, N, k);
@@ -593,10 +592,11 @@ function lambda_optimal = bisection(x, u, v_f, phi, N, L_U, L_L, F_A, F_B, k)
     lambda_optimal = lambda;
 end
 
-function [u_next, x_next] = apply_control(x, u, lambda_opt, k)
+function [u_curr, x_next] = apply_control(x, u, lambda_opt, k)
     lambda = lambda_opt*ones(k,1);
+    x_sim = x;
     u_opt = calculate_optimal_control(x, u, lambda, k);
-    [u, x] = update_states(x, u, u_opt, k);
-    u_next = [u.T_f(k) u.F_b(k) u.u_g(k)];
-    x_next = [x.v_h(k + 1) x.s_h(k + 1) x.n_g(k + 1)];
+    [~, x_sim] = update_states(x_sim, u, u_opt, k);
+    u_curr = [u_opt(1) u_opt(2) u_opt(3)];
+    x_next = [x_sim.v_h(k + 1) x_sim.s_h(k + 1) x_sim.n_g(k + 1)];
 end
