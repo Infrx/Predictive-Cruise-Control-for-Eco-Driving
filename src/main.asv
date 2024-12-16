@@ -21,7 +21,7 @@ w_f_max = 733;           % Max Engine Speed (rad/sec)
 v_lim = 30;
 % Time settings
 dt = 0.1;                % Time step (seconds)
-N = 500;                 % Number of time steps
+N = 130;                 % Number of time steps
 time = (0:N-1)*dt;       % Time vector
 t_react = 0.8;           % Reaction Time (seconds)
 % Define the state struct x
@@ -74,18 +74,16 @@ I_g = [17.23, 9.78, 6.42, 4.89, 4.08];  % Gear ratios for 5 gears
 %     max(1, min(x.n_g(k) + u.u_g(k), length(I_g)))];                          % Gear position update with bounds (f3)
 
 % Initial conditions
-x.v_h(1) = 0;
-x.v_h(2) = 0;              % Initial speed (m/s)
+x.v_h(1) = 0;              % Initial speed (m/s)
 x.s_h(1) = 0;              % Initial position (m)
 x.n_g(1) = 1;              % Initial gear (starting in gear 1)
-x.n_g(2) = 1;
-u.T_f(1) = 10;
-u.T_f(2) = 10;
+u.T_f(1) = 100;
+u.T_f(2) = 0;
 u.F_b(1) = 0;
 u.F_b(2) = 0;
 
-px.v_p(2) = 10;
-px.s_p(2) = 1500;
+px.v_p(2) = 5;
+px.s_p(2) = 15;
 
 vh_max(1) = 30;
 vh_max(2) = 30;
@@ -100,11 +98,9 @@ vh_max(2) = 30;
 %kappa = [0.1, 0.01, 0.001;    
 %         0.05, 0.005, 0.0005; 
 %        0.01, 0.001, 0.0001];
-kappa = [
-    0.01, 0, 0;              % κ0,j terms: keep zero idle consumption
-    1, 0.00005, 0.00001;      % κ1,j terms: slightly increased for better high-speed performance
-    0.01, 0.0006, 0         % κ2,j terms: reduced overall but added mid-term for better power band
-];
+kappa = [0,0, 0;    
+        0.001, 0.001, 0; 
+        0.1, 0, 0];
 % kappa = [
 %     0.145, 0.338, 0.007;    % κ0,j terms (constant in T_f)
 %     0.242, 0.215, 0.204;    % κ1,j terms (linear in T_f)
@@ -115,8 +111,8 @@ TWF = @(k) [T_f(k)^0 * w_f(k)^0, T_f(k)^0 * w_f(k)^1, T_f(k)^0 * w_f(k)^2;
             T_f(k)^2 * w_f(k)^0, T_f(k)^2 * w_f(k)^1, T_f(k)^2 * w_f(k)^2];
 m_fuel_dot = @(k) kappa .* TWF(k); % (7)
 %% Penalties / Need to refactor ASAP
-w_r = 150;
-w_c = 0.4;
+w_r = 2;
+w_c = 0.1;
 v_ref = 30;
 v_f = 30; % terminal speed needs to be clarified
 phi = 1;
@@ -138,11 +134,10 @@ for k = 2:N-1 - 30
     if vh_max(k + 1) < x.v_h(k)
         u.T_f(k) = 0;
         u.F_b(k) = F_b_max/4 * (abs(vh_max(k + 1) - x.v_h(k)));
-        u.u_g(k) = gearCond(x, k);
+        u.u_g(k) = 0;
         f_upt = vehicle_dynamics(x, u, k);
         x.v_h(k + 1) = x.v_h(k) + f_upt(1)*dt;
         x.s_h(k + 1) = x.s_h(k) + x.v_h(k + 1)*dt;
-        x.n_g(k + 1) = x.n_g(k) + u.u_g(k);
     else
         [L_U, L_L, F_A, F_B] = initPMP(x, u, 10, v_f, 1, k);
         L_OPT = bisection(x, u, v_f, 1, 10, L_U, L_L, F_A, F_B, k);
@@ -405,7 +400,7 @@ function [Lambda_U, Lambda_L, F_A, F_B] = initPMP(x, u, N,v_f, phi, k)
     B_max =  100000;  
 
     % Calculate q
-    q = max(abs(x.v_h(k) - v_f)); 
+    q = max(abs(x.v_h(k) - v_f)); % Let it be 15 for test
     
     % Terminal conditions for λmax and λmin
     lambda_max_N1 = 2*phi*q;
@@ -456,18 +451,103 @@ function u_opt = calculate_optimal_control(x_sim, u, lambda, k)
     %then find the optimal  (T,F) combination w.r.t gear position
     %return u_opt = [T_opt, F_opt, u_g_opt]
     current_gear = x_sim.n_g(k);
-    u_g = gearCond(x_sim, k);
-    [~, idx] = H(x_sim, u, lambda, T_f_opt(x_sim, u, lambda,k), F_b_opt(lambda,k), k);
-    if idx == 1
-        u_opt = [T_f_opt(x_sim, u, lambda,k) 0 u_g];
-    elseif idx == 2
-        u_opt = [0 F_b_opt(lambda,k) u_g];
-    else
-        fprintf("Unknown index at opt cont\n");
-    end   
-
-
-
+    idx_up = 0;
+    idx_sus = 0;
+    idx_down = 0;
+    if current_gear == 1
+        [H_sus, idx_sus] = H(x_sim, u, lambda, T_f_opt(x_sim, u, lambda,k), F_b_opt(lambda,k), k);
+        x_sim.n_g(k) = x_sim.n_g(k) + 1;
+        [H_up, idx_up] = H(x_sim, u, lambda, T_f_opt(x_sim, u, lambda,k), F_b_opt(lambda,k), k);
+        [~, idx] = min([H_sus, H_up]);
+        u_g = idx - 1;
+        x_sim.n_g(k) = current_gear;
+        % optimal control must be [Tf 0] or [0 F_b]
+        if idx == 1
+            if idx_sus == 1
+                u_opt = [T_f_opt(x_sim, u, lambda,k) 0 u_g];
+            elseif idx_sus == 2
+                u_opt = [0 F_b_opt(lambda,k) u_g];
+            else
+                fprintf("Unknown index at opt cont\n");
+            end
+        elseif idx == 2
+            if idx_up == 1
+                u_opt = [T_f_opt(x_sim, u, lambda,k) 0 u_g];
+            elseif idx_up == 2
+                u_opt = [0 F_b_opt(lambda,k) u_g];
+            else
+                fprintf("Unknown index at opt cont\n");
+            end
+        end
+        %u_opt = [T_f_opt(x_sim, u, lambda,k) F_b_opt(lambda,k) u_g];
+        return
+    end
+    if current_gear == 5
+        x_sim.n_g(k) = x_sim.n_g(k) - 1;
+        [H_down, idx_down] = H(x_sim, u, lambda, T_f_opt(x_sim, u, lambda, k), F_b_opt(lambda, k), k);
+        x_sim.n_g(k) = current_gear;
+        [H_sus, idx_sus] = H(x_sim, u, lambda, T_f_opt(x_sim, u, lambda, k), F_b_opt(lambda ,k), k);
+        [~, idx] = min([H_down, H_sus]);
+        u_g = idx - 2; % Maps [1,2] to [-1,0]
+        x_sim.n_g(k) = current_gear;
+        if idx == 1
+            if idx_down == 1
+                u_opt = [T_f_opt(x_sim, u, lambda,k) 0 u_g];
+            elseif idx_down == 2
+                u_opt = [0 F_b_opt(lambda,k) u_g];
+            else
+                fprintf("Unknown index at opt cont\n");
+            end
+        elseif idx == 2
+            if idx_sus == 1
+                u_opt = [T_f_opt(x_sim, u, lambda,k) 0 u_g];
+            elseif idx_sus == 2
+                u_opt = [0 F_b_opt(lambda,k) u_g];
+            else
+                fprintf("Unknown index at opt cont\n");
+            end
+        end
+        %u_opt = [T_f_opt(x_sim, u, lambda, k) F_b_opt(lambda, k) u_g];
+        return
+    end
+    if (current_gear > 1 && current_gear < 5)
+        x_sim.n_g(k) = x_sim.n_g(k) - 1;
+        [H_down, idx_down] = H(x_sim, u, lambda, T_f_opt(x_sim, u, lambda,k), F_b_opt(lambda,k), k);
+        x_sim.n_g(k) = current_gear;
+        [H_sus, idx_sus] = H(x_sim, u, lambda, T_f_opt(x_sim, u, lambda,k), F_b_opt(lambda,k), k);
+        x_sim.n_g(k) = x_sim.n_g(k) + 1;
+        [H_up, idx_up] = H(x_sim, u, lambda, T_f_opt(x_sim, u, lambda,k), F_b_opt(lambda,k), k);
+        [~, idx] = min([H_down, H_sus, H_up]);
+        u_g = idx - 2; % Maps [1,2,3] to [-1,0,1]
+        x_sim.n_g(k) = current_gear;
+        if idx == 1
+            if idx_down == 1
+                u_opt = [T_f_opt(x_sim, u, lambda,k) 0 u_g];
+            elseif idx_down == 2
+                u_opt = [0 F_b_opt(lambda,k) u_g];
+            else
+                fprintf("Unknown index at opt cont\n");
+            end
+        elseif idx == 2
+            if idx_sus == 1
+                u_opt = [T_f_opt(x_sim, u, lambda,k) 0 u_g];
+            elseif idx_sus == 2
+                u_opt = [0 F_b_opt(lambda,k) u_g];
+            else
+                fprintf("Unknown index at opt cont\n");
+            end
+        elseif idx == 3
+            if idx_up == 1
+                u_opt = [T_f_opt(x_sim, u, lambda,k) 0 u_g];
+            elseif idx_up == 2
+                u_opt = [0 F_b_opt(lambda,k) u_g];
+            else
+                fprintf("Unknown index at opt cont\n");
+            end
+        end
+        %u_opt = [T_f_opt(x_sim, u, lambda,k) F_b_opt(lambda,k) u_g];
+        return
+    end
 end
 
 function [u, x_sim] = update_states(x_sim, u, u_opt, n) % need T_max vhmax dont forget
