@@ -21,7 +21,7 @@ w_f_max = 733;           % Max Engine Speed (rad/sec)
 v_lim = 30;
 % Time settings
 dt = 0.1;                % Time step (seconds)
-N = 500;                 % Number of time steps
+N = 230;                 % Number of time steps
 time = (0:N-1)*dt;       % Time vector
 t_react = 0.8;           % Reaction Time (seconds)
 % Define the state struct x
