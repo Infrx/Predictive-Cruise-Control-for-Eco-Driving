@@ -1,9 +1,9 @@
-classdef StandardMPC < handle
+classdef StandardMPC_IP < handle
     properties
         % System dimensions
         nx = 3;  % Number of states [v_h, s_h, n_g]
         nu = 3;  % Number of inputs [T_f, F_b, u_g]
-        N = 25;  % Prediction horizon
+        N = 20;  % Prediction horizon
         
         % Vehicle parameters (From the paper)
         M = 1420;          % Vehicle mass (kg) 
@@ -34,25 +34,27 @@ classdef StandardMPC < handle
         a_h_max = 3.924;   % Max acceleration (0.4g)
         a_h_bmax = 9.81;   % Max braking decel (1.0g)
         F_b_max            % Max brake force (N)
-        
+        fuel_cost = 0;     % Current fuel cost
         % Previous inputs for control effort calculation
         prev_T_f = 0;
         prev_gear = 1;
     end
     
     methods
-        function obj = StandardMPC()
+        function obj = StandardMPC_IP()
             % Initialize fuel consumption coefficients (from paper)
-            obj.kappa = [0.01, 0, 0;              % κ0,j terms
-                        1, 0.00005, 0.00001;      % κ1,j terms
-                        0.01, 0.0006, 0];         % κ2,j terms
-            
+            obj.kappa = [
+                0.00001, 0, 0;       % κ0,j terms (constant term)
+                0.00002, 0.000001, 0; % κ1,j terms (linear in T_f and w_f)
+                0.000005, 0.0000001, 0 % κ2,j terms (quadratic terms)
+            ];
             % Calculate maximum brake force
             obj.F_b_max = obj.M * obj.a_h_bmax;
         end
         
-        function [x_pred, u_opt] = solve(obj, x0, pred_vehicle)
-            % Formulate and solve the optimization problem
+        function [x_pred, u_opt, fuel_rate] = solve(obj, x0, pred_vehicle)
+            % Reset fuel cost
+            obj.fuel_cost = 0;
             
             % Total number of variables: states + inputs for N steps
             nvar = obj.nx*obj.N + obj.nu*(obj.N-1);
@@ -81,6 +83,12 @@ classdef StandardMPC < handle
             x_pred = reshape(z_opt(1:obj.nx*obj.N), [obj.nx, obj.N]);
             u_indices = obj.nx*obj.N + (1:obj.nu*(obj.N-1));
             u_opt = reshape(z_opt(u_indices), [obj.nu, obj.N-1]);
+            
+            % Calculate fuel rate for first step
+            T_f = u_opt(1,1);
+            curr_gear = max(1, min(5, round(x_pred(3,1))));
+            w_f = min(30/(pi*obj.r_w) * obj.I_g(curr_gear) * x_pred(1,1), obj.w_f_max);
+            fuel_rate = obj.calculate_fuel_rate(T_f, w_f);
         end
         
         function [A, b] = get_inequality_constraints(obj, x0, pred_vehicle)
@@ -185,6 +193,11 @@ classdef StandardMPC < handle
                 % Fuel consumption
                 w_f = min(30/(pi*obj.r_w) * obj.I_g(curr_gear) * states(1,k), obj.w_f_max);
                 fuel_cost = obj.calculate_fuel_rate(T_f, w_f);
+                
+                % Store fuel cost if it's first step
+                if k == 1
+                    obj.fuel_cost = fuel_cost;
+                end
                 
                 % Control effort
                 if k > 1
